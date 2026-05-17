@@ -1,0 +1,657 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <link rel="icon" href="data:,">
+  <title>Driving Scene</title>
+  <style>
+    html,
+    body {
+      margin: 0;
+      height: 100%;
+      overflow: hidden;
+      background: #04060a;
+    }
+
+    canvas {
+      display: block;
+      width: 100vw;
+      height: 100vh;
+    }
+  </style>
+</head>
+<body>
+  <canvas id="scene" aria-label="Animated side-view driving scene"></canvas>
+  <script>
+    (() => {
+      const canvas = document.getElementById("scene");
+      const ctx = canvas.getContext("2d");
+      const TAU = Math.PI * 2;
+
+      if (!ctx) {
+        return;
+      }
+
+      let width = 0;
+      let height = 0;
+      let dpr = 1;
+
+      const state = {
+        frame: 0,
+        lastTime: performance.now(),
+        worldOffset: 0
+      };
+
+      window.__sceneStatus = {
+        frame: 0,
+        height: 0,
+        ready: false,
+        width: 0
+      };
+
+      function clamp(value, min, max) {
+        return Math.max(min, Math.min(max, value));
+      }
+
+      function lerp(a, b, t) {
+        return a + (b - a) * t;
+      }
+
+      function fract(value) {
+        return value - Math.floor(value);
+      }
+
+      function hash(value) {
+        return fract(Math.sin(value * 127.1 + 311.7) * 43758.5453123);
+      }
+
+      function smoothstep(value) {
+        return value * value * (3 - 2 * value);
+      }
+
+      function noise1D(x) {
+        const base = Math.floor(x);
+        const mix = smoothstep(x - base);
+        return lerp(hash(base), hash(base + 1), mix);
+      }
+
+      function layeredNoise(x) {
+        return noise1D(x) * 0.56 + noise1D(x * 0.51 + 17.7) * 0.29 + noise1D(x * 1.91 + 6.4) * 0.15;
+      }
+
+      function ellipsePath(x, y, rx, ry) {
+        ctx.beginPath();
+        ctx.ellipse(x, y, rx, ry, 0, 0, TAU);
+      }
+
+      function resize() {
+        dpr = clamp(window.devicePixelRatio || 1, 1, 2);
+        width = window.innerWidth;
+        height = window.innerHeight;
+        canvas.width = Math.round(width * dpr);
+        canvas.height = Math.round(height * dpr);
+        canvas.style.width = width + "px";
+        canvas.style.height = height + "px";
+        window.__sceneStatus.width = width;
+        window.__sceneStatus.height = height;
+      }
+
+      function drawRepeated(config) {
+        const overdraw = config.overdraw || 160;
+        const offset = state.worldOffset * config.factor;
+        const start = Math.floor((offset - overdraw) / config.spacing) - 1;
+        const end = Math.floor((offset + width + overdraw) / config.spacing) + 1;
+
+        for (let index = start; index <= end; index += 1) {
+          const jitter = (hash(index * 9.37 + (config.seedOffset || 0)) - 0.5) * (config.jitter || 0);
+          const x = index * config.spacing - offset + jitter;
+          config.drawItem(x, index);
+        }
+      }
+
+      function drawSky(horizonY, time) {
+        const skyGradient = ctx.createLinearGradient(0, 0, 0, height);
+        skyGradient.addColorStop(0, "#162747");
+        skyGradient.addColorStop(0.35, "#45648f");
+        skyGradient.addColorStop(0.62, "#d78767");
+        skyGradient.addColorStop(1, "#f0d0a1");
+        ctx.fillStyle = skyGradient;
+        ctx.fillRect(0, 0, width, height);
+
+        const sunX = width * 0.76;
+        const sunY = height * 0.23;
+        const glow = ctx.createRadialGradient(sunX, sunY, 0, sunX, sunY, width * 0.28);
+        glow.addColorStop(0, "rgba(255, 244, 221, 0.94)");
+        glow.addColorStop(0.2, "rgba(255, 211, 151, 0.45)");
+        glow.addColorStop(0.55, "rgba(255, 165, 109, 0.18)");
+        glow.addColorStop(1, "rgba(255, 165, 109, 0)");
+        ctx.fillStyle = glow;
+        ctx.fillRect(0, 0, width, height);
+
+        ctx.fillStyle = "rgba(255, 241, 218, 0.9)";
+        ellipsePath(sunX, sunY, height * 0.052, height * 0.052);
+        ctx.fill();
+
+        for (let band = 0; band < 4; band += 1) {
+          const drift = (state.worldOffset * (0.01 + band * 0.004)) % (width + 420);
+          const cloudX = width * (0.18 + band * 0.19) - drift;
+          const cloudY = horizonY * (0.2 + band * 0.1) + Math.sin(time * 0.08 + band) * 6;
+          const cloudW = width * (0.34 + band * 0.04);
+          const cloudH = 22 + band * 8;
+          const cloudGradient = ctx.createRadialGradient(cloudX, cloudY, 0, cloudX, cloudY, cloudW * 0.5);
+          cloudGradient.addColorStop(0, "rgba(255, 236, 216, 0.2)");
+          cloudGradient.addColorStop(1, "rgba(255, 236, 216, 0)");
+          ctx.fillStyle = cloudGradient;
+          ellipsePath(cloudX, cloudY, cloudW, cloudH);
+          ctx.fill();
+          ellipsePath(cloudX + width + 420, cloudY, cloudW, cloudH);
+          ctx.fill();
+        }
+
+        const haze = ctx.createLinearGradient(0, horizonY - height * 0.05, 0, horizonY + height * 0.14);
+        haze.addColorStop(0, "rgba(255, 220, 181, 0)");
+        haze.addColorStop(0.55, "rgba(255, 214, 163, 0.22)");
+        haze.addColorStop(1, "rgba(255, 214, 163, 0)");
+        ctx.fillStyle = haze;
+        ctx.fillRect(0, horizonY - height * 0.05, width, height * 0.2);
+      }
+
+      function drawRange(baseY, amplitude, factor, detail, topColor, bottomColor, alpha) {
+        ctx.beginPath();
+        ctx.moveTo(-30, height);
+
+        for (let x = -30; x <= width + 30; x += 10) {
+          const worldX = x + state.worldOffset * factor;
+          const ridge = layeredNoise(worldX * detail);
+          const secondary = noise1D(worldX * detail * 2.3 + 19.7);
+          const y = baseY - (ridge * 0.86 + secondary * 0.24) * amplitude;
+          ctx.lineTo(x, y);
+        }
+
+        ctx.lineTo(width + 30, height);
+        ctx.closePath();
+
+        const fill = ctx.createLinearGradient(0, baseY - amplitude, 0, baseY + 40);
+        fill.addColorStop(0, topColor);
+        fill.addColorStop(1, bottomColor);
+        ctx.globalAlpha = alpha;
+        ctx.fillStyle = fill;
+        ctx.fill();
+        ctx.globalAlpha = 1;
+      }
+
+      function drawFields(horizonY, roadY) {
+        const fieldGradient = ctx.createLinearGradient(0, horizonY, 0, roadY);
+        fieldGradient.addColorStop(0, "#7f735b");
+        fieldGradient.addColorStop(0.5, "#636a53");
+        fieldGradient.addColorStop(1, "#49533f");
+        ctx.fillStyle = fieldGradient;
+        ctx.fillRect(0, horizonY - 1, width, roadY - horizonY + 1);
+
+        for (let band = 0; band < 4; band += 1) {
+          const bandY = lerp(horizonY + 12, roadY - 34, band / 3);
+          const heightScale = 4 + band * 2;
+          const alpha = 0.04 + band * 0.02;
+          drawRepeated({
+            factor: 0.16 + band * 0.05,
+            jitter: 90,
+            overdraw: 200,
+            spacing: 220 + band * 65,
+            seedOffset: band * 11,
+            drawItem(x, index) {
+              const blockWidth = 140 + hash(index * 1.9 + band) * 190;
+              const blockHeight = heightScale + hash(index * 2.7 + band) * (heightScale + 4);
+              ctx.fillStyle = "rgba(246, 205, 146, " + alpha.toFixed(3) + ")";
+              ctx.fillRect(x, bandY + hash(index * 3.8 + band) * 18, blockWidth, blockHeight);
+            }
+          });
+        }
+      }
+
+      function drawDistantTrees(horizonY) {
+        drawRepeated({
+          factor: 0.26,
+          jitter: 30,
+          spacing: 58,
+          overdraw: 90,
+          drawItem(x, index) {
+            const baseY = horizonY + 12 + hash(index * 2.8) * 18;
+            const scale = 0.55 + hash(index * 5.7) * 0.75;
+            const style = hash(index * 3.2);
+            const trunkH = 7 * scale;
+            ctx.fillStyle = "rgba(49, 66, 63, 0.75)";
+            ctx.fillRect(x - 1.2 * scale, baseY - trunkH, 2.4 * scale, trunkH + 1);
+            ctx.fillStyle = style > 0.45 ? "rgba(64, 88, 78, 0.88)" : "rgba(72, 95, 83, 0.86)";
+
+            if (style > 0.45) {
+              ctx.beginPath();
+              ctx.moveTo(x, baseY - 24 * scale);
+              ctx.lineTo(x - 11 * scale, baseY - 6 * scale);
+              ctx.lineTo(x - 7 * scale, baseY - 6 * scale);
+              ctx.lineTo(x - 13 * scale, baseY + 1);
+              ctx.lineTo(x + 13 * scale, baseY + 1);
+              ctx.lineTo(x + 7 * scale, baseY - 6 * scale);
+              ctx.lineTo(x + 11 * scale, baseY - 6 * scale);
+              ctx.closePath();
+              ctx.fill();
+            } else {
+              ellipsePath(x - 6 * scale, baseY - 14 * scale, 8 * scale, 8 * scale);
+              ctx.fill();
+              ellipsePath(x + 3 * scale, baseY - 16 * scale, 10 * scale, 9 * scale);
+              ctx.fill();
+              ellipsePath(x, baseY - 8 * scale, 12 * scale, 9 * scale);
+              ctx.fill();
+            }
+          }
+        });
+      }
+
+      function drawMidTrees(roadY) {
+        drawRepeated({
+          factor: 0.46,
+          jitter: 48,
+          spacing: 132,
+          overdraw: 160,
+          drawItem(x, index) {
+            const scale = 0.8 + hash(index * 2.1) * 1.05;
+            const crownType = hash(index * 7.3);
+            const baseY = roadY - 32 - hash(index * 3.4) * 14;
+            const trunkW = 6 * scale;
+            const trunkH = 24 * scale;
+            ctx.fillStyle = "rgba(68, 54, 44, 0.82)";
+            ctx.fillRect(x - trunkW * 0.5, baseY - trunkH, trunkW, trunkH + 3);
+            ctx.fillStyle = crownType > 0.5 ? "rgba(54, 79, 61, 0.95)" : "rgba(67, 94, 69, 0.95)";
+
+            if (crownType > 0.5) {
+              ctx.beginPath();
+              ctx.moveTo(x, baseY - 58 * scale);
+              ctx.lineTo(x - 22 * scale, baseY - 16 * scale);
+              ctx.lineTo(x - 11 * scale, baseY - 16 * scale);
+              ctx.lineTo(x - 28 * scale, baseY + 1);
+              ctx.lineTo(x + 28 * scale, baseY + 1);
+              ctx.lineTo(x + 11 * scale, baseY - 16 * scale);
+              ctx.lineTo(x + 22 * scale, baseY - 16 * scale);
+              ctx.closePath();
+              ctx.fill();
+            } else {
+              ellipsePath(x - 14 * scale, baseY - 34 * scale, 18 * scale, 16 * scale);
+              ctx.fill();
+              ellipsePath(x + 6 * scale, baseY - 38 * scale, 21 * scale, 18 * scale);
+              ctx.fill();
+              ellipsePath(x, baseY - 22 * scale, 25 * scale, 18 * scale);
+              ctx.fill();
+              ctx.fillStyle = "rgba(102, 132, 90, 0.18)";
+              ellipsePath(x + 9 * scale, baseY - 35 * scale, 12 * scale, 9 * scale);
+              ctx.fill();
+            }
+          }
+        });
+      }
+
+      function drawPoles(roadY) {
+        const poles = [];
+
+        drawRepeated({
+          factor: 0.65,
+          jitter: 26,
+          spacing: 210,
+          overdraw: 140,
+          drawItem(x, index) {
+            poles.push({
+              crossbarY: roadY - 124 - hash(index * 4.7) * 26,
+              height: 110 + hash(index * 1.8) * 36,
+              x: x
+            });
+          }
+        });
+
+        poles.sort((a, b) => a.x - b.x);
+
+        ctx.lineWidth = 1.4;
+        ctx.strokeStyle = "rgba(75, 58, 47, 0.5)";
+
+        for (let wire = 0; wire < 2; wire += 1) {
+          ctx.beginPath();
+
+          for (let i = 0; i < poles.length; i += 1) {
+            const pole = poles[i];
+            const y = pole.crossbarY + wire * 9;
+
+            if (i === 0) {
+              ctx.moveTo(pole.x, y);
+            } else {
+              const prev = poles[i - 1];
+              const prevY = prev.crossbarY + wire * 9;
+              const midX = (prev.x + pole.x) * 0.5;
+              const midY = (prevY + y) * 0.5 + 8;
+              ctx.quadraticCurveTo(midX, midY, pole.x, y);
+            }
+          }
+
+          ctx.stroke();
+        }
+
+        for (const pole of poles) {
+          ctx.fillStyle = "rgba(85, 66, 52, 0.92)";
+          ctx.fillRect(pole.x - 2.4, pole.crossbarY, 4.8, pole.height);
+          ctx.fillRect(pole.x - 11, pole.crossbarY + 8, 22, 3);
+        }
+      }
+
+      function drawRoad(roadY) {
+        const vergeHeight = Math.max(12, height * 0.026);
+        const vergeGradient = ctx.createLinearGradient(0, roadY - vergeHeight, 0, roadY + 6);
+        vergeGradient.addColorStop(0, "#9e8e63");
+        vergeGradient.addColorStop(1, "#6d6043");
+        ctx.fillStyle = vergeGradient;
+        ctx.fillRect(0, roadY - vergeHeight, width, vergeHeight + 5);
+
+        const roadGradient = ctx.createLinearGradient(0, roadY, 0, height);
+        roadGradient.addColorStop(0, "#3e4149");
+        roadGradient.addColorStop(0.45, "#2b2d33");
+        roadGradient.addColorStop(1, "#17181d");
+        ctx.fillStyle = roadGradient;
+        ctx.fillRect(0, roadY, width, height - roadY);
+
+        ctx.fillStyle = "rgba(255, 226, 179, 0.2)";
+        ctx.fillRect(0, roadY, width, 2);
+        ctx.fillStyle = "rgba(0, 0, 0, 0.18)";
+        ctx.fillRect(0, roadY + 4, width, 8);
+
+        drawRepeated({
+          factor: 1.06,
+          jitter: 20,
+          spacing: 84,
+          overdraw: 140,
+          drawItem(x, index) {
+            const y = roadY + 16 + hash(index * 2.3) * (height - roadY - 24);
+            const streakW = 28 + hash(index * 6.2) * 70;
+            const alpha = 0.05 + hash(index * 9.1) * 0.08;
+            ctx.fillStyle = "rgba(255, 255, 255, " + alpha.toFixed(3) + ")";
+            ctx.fillRect(x, y, streakW, 2);
+          }
+        });
+
+        drawRepeated({
+          factor: 1.18,
+          jitter: 28,
+          spacing: 178,
+          overdraw: 180,
+          drawItem(x) {
+            ctx.fillStyle = "rgba(245, 215, 158, 0.12)";
+            ctx.fillRect(x, roadY + 12, 72, 3);
+          }
+        });
+      }
+
+      function drawRoadside(roadY) {
+        drawRepeated({
+          factor: 0.84,
+          jitter: 34,
+          spacing: 118,
+          overdraw: 120,
+          drawItem(x, index) {
+            const scale = 0.8 + hash(index * 2.4) * 1.1;
+            const baseY = roadY - 5 + hash(index * 4.1) * 5;
+            ctx.fillStyle = "rgba(56, 76, 55, 0.96)";
+            ellipsePath(x - 9 * scale, baseY, 12 * scale, 8 * scale);
+            ctx.fill();
+            ellipsePath(x + 6 * scale, baseY - 3 * scale, 13 * scale, 9 * scale);
+            ctx.fill();
+            ctx.fillStyle = "rgba(101, 124, 86, 0.14)";
+            ellipsePath(x + 7 * scale, baseY - 5 * scale, 8 * scale, 5 * scale);
+            ctx.fill();
+          }
+        });
+
+        drawRepeated({
+          factor: 0.94,
+          jitter: 12,
+          spacing: 94,
+          overdraw: 80,
+          drawItem(x, index) {
+            const postH = 10 + hash(index * 5.3) * 8;
+            ctx.fillStyle = "rgba(150, 133, 95, 0.7)";
+            ctx.fillRect(x, roadY - postH, 2.6, postH);
+          }
+        });
+      }
+
+      function drawWheel(cx, cy, radius, angle) {
+        ctx.save();
+        ctx.translate(cx, cy);
+        ctx.fillStyle = "rgba(0, 0, 0, 0.22)";
+        ellipsePath(0, radius + 9, radius * 1.18, radius * 0.36);
+        ctx.fill();
+
+        const tireGradient = ctx.createRadialGradient(-radius * 0.2, -radius * 0.25, radius * 0.18, 0, 0, radius + 6);
+        tireGradient.addColorStop(0, "#4a4d54");
+        tireGradient.addColorStop(0.4, "#202329");
+        tireGradient.addColorStop(1, "#08090c");
+        ctx.fillStyle = tireGradient;
+        ctx.beginPath();
+        ctx.arc(0, 0, radius + 4, 0, TAU);
+        ctx.fill();
+
+        ctx.fillStyle = "#12151a";
+        ctx.beginPath();
+        ctx.arc(0, 0, radius - 1, 0, TAU);
+        ctx.fill();
+
+        const rimGradient = ctx.createRadialGradient(-radius * 0.16, -radius * 0.16, radius * 0.08, 0, 0, radius * 0.72);
+        rimGradient.addColorStop(0, "#d8dde6");
+        rimGradient.addColorStop(0.45, "#8794a3");
+        rimGradient.addColorStop(1, "#56616f");
+        ctx.fillStyle = rimGradient;
+        ctx.beginPath();
+        ctx.arc(0, 0, radius * 0.63, 0, TAU);
+        ctx.fill();
+
+        ctx.save();
+        ctx.rotate(angle);
+        ctx.strokeStyle = "rgba(240, 245, 252, 0.9)";
+        ctx.lineWidth = Math.max(1.6, radius * 0.08);
+
+        for (let spoke = 0; spoke < 5; spoke += 1) {
+          ctx.rotate(TAU / 5);
+          ctx.beginPath();
+          ctx.moveTo(-radius * 0.04, -radius * 0.08);
+          ctx.lineTo(radius * 0.5, -radius * 0.02);
+          ctx.stroke();
+        }
+
+        ctx.restore();
+
+        ctx.fillStyle = "#d2d7de";
+        ctx.beginPath();
+        ctx.arc(0, 0, radius * 0.14, 0, TAU);
+        ctx.fill();
+
+        ctx.strokeStyle = "rgba(255, 255, 255, 0.18)";
+        ctx.lineWidth = 1.2;
+        ctx.beginPath();
+        ctx.arc(0, 0, radius + 1.8, Math.PI * 0.22, Math.PI * 1.22);
+        ctx.stroke();
+        ctx.restore();
+      }
+
+      function drawCar(carX, roadY, time) {
+        const scale = clamp(Math.min(width / 1180, height / 760), 0.66, 1.12);
+        const wheelRadius = 31 * scale;
+        const rearTravel = Math.sin(time * 3.5) * 1.3 + (noise1D(state.worldOffset * 0.045) - 0.5) * 3.2;
+        const frontTravel = Math.sin(time * 3.5 + 0.45) * 1.3 + (noise1D(state.worldOffset * 0.045 + 4.7) - 0.5) * 3.2;
+        const bodyBob = (rearTravel + frontTravel) * 0.55;
+        const pitch = (frontTravel - rearTravel) * 0.009;
+        const rearWheelX = carX + 96 * scale;
+        const frontWheelX = carX + 258 * scale;
+        const rearWheelY = roadY - wheelRadius + rearTravel * 0.25;
+        const frontWheelY = roadY - wheelRadius + frontTravel * 0.25;
+        const shellX = carX;
+        const shellY = roadY - 144 * scale + bodyBob;
+        const bodyGradient = ctx.createLinearGradient(shellX, shellY + 16 * scale, shellX + 330 * scale, shellY + 118 * scale);
+        bodyGradient.addColorStop(0, "#20364e");
+        bodyGradient.addColorStop(0.36, "#4f7093");
+        bodyGradient.addColorStop(0.72, "#8aa1ba");
+        bodyGradient.addColorStop(1, "#cad0d3");
+
+        ctx.fillStyle = "rgba(0, 0, 0, 0.22)";
+        ellipsePath((rearWheelX + frontWheelX) * 0.5, roadY + 8, 152 * scale, 18 * scale);
+        ctx.fill();
+
+        drawWheel(rearWheelX, rearWheelY, wheelRadius, state.worldOffset / wheelRadius);
+        drawWheel(frontWheelX, frontWheelY, wheelRadius, state.worldOffset / wheelRadius);
+
+        ctx.save();
+        ctx.translate(shellX + 177 * scale, shellY + 76 * scale);
+        ctx.rotate(pitch);
+        ctx.translate(-(shellX + 177 * scale), -(shellY + 76 * scale));
+
+        ctx.fillStyle = bodyGradient;
+        ctx.beginPath();
+        ctx.moveTo(shellX + 26 * scale, shellY + 106 * scale);
+        ctx.quadraticCurveTo(shellX + 18 * scale, shellY + 88 * scale, shellX + 30 * scale, shellY + 73 * scale);
+        ctx.lineTo(shellX + 47 * scale, shellY + 63 * scale);
+        ctx.quadraticCurveTo(shellX + 79 * scale, shellY + 22 * scale, shellX + 138 * scale, shellY + 19 * scale);
+        ctx.lineTo(shellX + 212 * scale, shellY + 19 * scale);
+        ctx.quadraticCurveTo(shellX + 264 * scale, shellY + 21 * scale, shellX + 300 * scale, shellY + 57 * scale);
+        ctx.lineTo(shellX + 326 * scale, shellY + 64 * scale);
+        ctx.quadraticCurveTo(shellX + 341 * scale, shellY + 67 * scale, shellX + 346 * scale, shellY + 84 * scale);
+        ctx.lineTo(shellX + 348 * scale, shellY + 95 * scale);
+        ctx.quadraticCurveTo(shellX + 349 * scale, shellY + 107 * scale, shellX + 335 * scale, shellY + 110 * scale);
+        ctx.lineTo(shellX + 24 * scale, shellY + 110 * scale);
+        ctx.closePath();
+        ctx.fill();
+
+        ctx.fillStyle = "rgba(6, 10, 18, 0.24)";
+        ctx.beginPath();
+        ctx.moveTo(shellX + 38 * scale, shellY + 95 * scale);
+        ctx.lineTo(shellX + 325 * scale, shellY + 95 * scale);
+        ctx.lineTo(shellX + 331 * scale, shellY + 109 * scale);
+        ctx.lineTo(shellX + 30 * scale, shellY + 109 * scale);
+        ctx.closePath();
+        ctx.fill();
+
+        ctx.strokeStyle = "rgba(255, 250, 240, 0.26)";
+        ctx.lineWidth = 2.1 * scale;
+        ctx.beginPath();
+        ctx.moveTo(shellX + 42 * scale, shellY + 69 * scale);
+        ctx.quadraticCurveTo(shellX + 86 * scale, shellY + 23 * scale, shellX + 207 * scale, shellY + 23 * scale);
+        ctx.quadraticCurveTo(shellX + 258 * scale, shellY + 25 * scale, shellX + 304 * scale, shellY + 61 * scale);
+        ctx.stroke();
+
+        const glassGradient = ctx.createLinearGradient(shellX + 104 * scale, shellY + 28 * scale, shellX + 274 * scale, shellY + 66 * scale);
+        glassGradient.addColorStop(0, "rgba(220, 233, 242, 0.88)");
+        glassGradient.addColorStop(0.35, "rgba(105, 136, 164, 0.82)");
+        glassGradient.addColorStop(1, "rgba(24, 34, 46, 0.92)");
+        ctx.fillStyle = glassGradient;
+        ctx.beginPath();
+        ctx.moveTo(shellX + 102 * scale, shellY + 29 * scale);
+        ctx.lineTo(shellX + 207 * scale, shellY + 29 * scale);
+        ctx.quadraticCurveTo(shellX + 244 * scale, shellY + 31 * scale, shellX + 267 * scale, shellY + 57 * scale);
+        ctx.lineTo(shellX + 125 * scale, shellY + 57 * scale);
+        ctx.quadraticCurveTo(shellX + 109 * scale, shellY + 55 * scale, shellX + 102 * scale, shellY + 42 * scale);
+        ctx.closePath();
+        ctx.fill();
+
+        ctx.strokeStyle = "rgba(228, 236, 242, 0.4)";
+        ctx.lineWidth = 1.8 * scale;
+        ctx.beginPath();
+        ctx.moveTo(shellX + 154 * scale, shellY + 30 * scale);
+        ctx.lineTo(shellX + 148 * scale, shellY + 57 * scale);
+        ctx.moveTo(shellX + 221 * scale, shellY + 31 * scale);
+        ctx.lineTo(shellX + 228 * scale, shellY + 57 * scale);
+        ctx.stroke();
+
+        ctx.strokeStyle = "rgba(16, 24, 35, 0.28)";
+        ctx.lineWidth = 1.6 * scale;
+        ctx.beginPath();
+        ctx.moveTo(shellX + 177 * scale, shellY + 58 * scale);
+        ctx.lineTo(shellX + 177 * scale, shellY + 104 * scale);
+        ctx.moveTo(shellX + 246 * scale, shellY + 58 * scale);
+        ctx.lineTo(shellX + 252 * scale, shellY + 100 * scale);
+        ctx.stroke();
+
+        ctx.fillStyle = "rgba(245, 249, 252, 0.22)";
+        ellipsePath(shellX + 233 * scale, shellY + 40 * scale, 32 * scale, 6 * scale);
+        ctx.fill();
+
+        ctx.fillStyle = bodyGradient;
+        for (const wheelX of [shellX + 96 * scale, shellX + 258 * scale]) {
+          ctx.beginPath();
+          ctx.moveTo(wheelX - 54 * scale, shellY + 109 * scale);
+          ctx.quadraticCurveTo(wheelX - 45 * scale, shellY + 61 * scale, wheelX, shellY + 59 * scale);
+          ctx.quadraticCurveTo(wheelX + 45 * scale, shellY + 61 * scale, wheelX + 54 * scale, shellY + 109 * scale);
+          ctx.closePath();
+          ctx.fill();
+        }
+
+        ctx.strokeStyle = "rgba(255, 249, 239, 0.18)";
+        ctx.lineWidth = 2.2 * scale;
+        for (const wheelX of [shellX + 96 * scale, shellX + 258 * scale]) {
+          ctx.beginPath();
+          ctx.arc(wheelX, shellY + 109 * scale, 43 * scale, Math.PI * 1.03, Math.PI * 1.97, true);
+          ctx.stroke();
+        }
+
+        ctx.fillStyle = "#f6d49e";
+        ellipsePath(shellX + 330 * scale, shellY + 78 * scale, 10 * scale, 6 * scale);
+        ctx.fill();
+        ctx.fillStyle = "rgba(246, 212, 158, 0.22)";
+        ellipsePath(shellX + 338 * scale, shellY + 78 * scale, 19 * scale, 10 * scale);
+        ctx.fill();
+
+        ctx.fillStyle = "#b64337";
+        ellipsePath(shellX + 22 * scale, shellY + 83 * scale, 8 * scale, 5 * scale);
+        ctx.fill();
+
+        ctx.fillStyle = "rgba(245, 247, 250, 0.44)";
+        ctx.fillRect(shellX + 186 * scale, shellY + 72 * scale, 19 * scale, 2.2 * scale);
+        ctx.fillRect(shellX + 257 * scale, shellY + 74 * scale, 15 * scale, 2.2 * scale);
+
+        ctx.fillStyle = "rgba(17, 25, 35, 0.44)";
+        ctx.fillRect(shellX + 44 * scale, shellY + 90 * scale, 282 * scale, 3 * scale);
+
+        ctx.restore();
+      }
+
+      function render(time) {
+        ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+        ctx.clearRect(0, 0, width, height);
+
+        const horizonY = height * 0.62;
+        const roadY = height * 0.82;
+        const carX = clamp(width * 0.31, 48, width - 430);
+
+        drawSky(horizonY, time);
+        drawRange(horizonY + height * 0.03, height * 0.22, 0.08, 0.0032, "#607296", "#41506a", 0.9);
+        drawRange(horizonY + height * 0.07, height * 0.14, 0.14, 0.0046, "#6b7890", "#556175", 0.78);
+        drawFields(horizonY, roadY);
+        drawDistantTrees(horizonY);
+        drawMidTrees(roadY);
+        drawPoles(roadY);
+        drawRoad(roadY);
+        drawRoadside(roadY);
+        drawCar(carX, roadY, time);
+      }
+
+      function frame(now) {
+        const delta = Math.min(0.033, Math.max(0.001, (now - state.lastTime) / 1000));
+        const time = now * 0.001;
+        const speed = 168 + Math.sin(time * 0.22) * 7;
+        state.lastTime = now;
+        state.worldOffset = (state.worldOffset + speed * delta) % 1000000;
+        state.frame += 1;
+        window.__sceneStatus.frame = state.frame;
+        render(time);
+        requestAnimationFrame(frame);
+      }
+
+      resize();
+      window.addEventListener("resize", resize, { passive: true });
+      window.__sceneStatus.ready = true;
+      requestAnimationFrame(frame);
+    })();
+  </script>
+</body>
+</html>

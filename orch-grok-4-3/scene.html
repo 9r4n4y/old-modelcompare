@@ -1,0 +1,730 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Driving Scene • Sunset Drive</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            background: #0a0a0f;
+            overflow: hidden;
+            font-family: system-ui, -apple-system, sans-serif;
+        }
+        canvas {
+            display: block;
+            width: 100vw;
+            height: 100vh;
+        }
+        .info {
+            position: absolute;
+            bottom: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            color: rgba(255,255,255,0.4);
+            font-size: 12px;
+            letter-spacing: 2px;
+            pointer-events: none;
+            user-select: none;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="scene"></canvas>
+    <div class="info">SUNSET DRIVE • PARALLAX SIMULATION</div>
+
+    <script>
+        const canvas = document.getElementById('scene');
+        const ctx = canvas.getContext('2d', { alpha: true });
+
+        let width = window.innerWidth;
+        let height = window.innerHeight;
+        let time = 0;
+        let lastTime = performance.now();
+
+        // Car position (fixed in view)
+        const CAR_X = width * 0.28;
+        let carY = height * 0.58;
+        let carBob = 0;
+
+        // Parallax speeds (pixels per frame at 60fps)
+        const speeds = {
+            sky: 0.05,
+            distantHills: 0.4,
+            midHills: 1.1,
+            farTrees: 1.8,
+            nearTrees: 3.2,
+            poles: 4.5,
+            road: 5.8,
+            markings: 6.2,
+            grass: 3.8
+        };
+
+        // World dimensions for seamless looping
+        const WORLD_WIDTH = 2200;
+
+        // Layer data
+        let distantMountains = [];
+        let midHills = [];
+        let farTrees = [];
+        let nearTrees = [];
+        let utilityPoles = [];
+        let roadMarkings = [];
+        let grassPatches = [];
+
+        // Car animation state
+        let wheelAngle = 0;
+        let suspension = 0;
+
+        function resizeCanvas() {
+            width = window.innerWidth;
+            height = window.innerHeight;
+            canvas.width = width;
+            canvas.height = height;
+            carY = height * 0.58;
+        }
+
+        function initLayers() {
+            // Distant mountains - large, slow, atmospheric
+            distantMountains = [];
+            for (let i = 0; i < 7; i++) {
+                distantMountains.push({
+                    x: i * 380 - 150,
+                    baseY: height * 0.48,
+                    height: 120 + Math.random() * 90,
+                    width: 280 + Math.random() * 120,
+                    color: i % 2 === 0 ? '#2a3a5a' : '#1f2f4a',
+                    offset: Math.random() * 50
+                });
+            }
+
+            // Mid hills - rolling terrain
+            midHills = [];
+            for (let i = 0; i < 9; i++) {
+                midHills.push({
+                    x: i * 260 - 80,
+                    baseY: height * 0.56,
+                    height: 65 + Math.random() * 55,
+                    width: 190 + Math.random() * 70,
+                    color: '#3d4a3a'
+                });
+            }
+
+            // Far trees (smaller, behind road)
+            farTrees = [];
+            for (let i = 0; i < 11; i++) {
+                farTrees.push({
+                    x: i * 195 - 60,
+                    y: height * 0.61,
+                    scale: 0.65 + Math.random() * 0.35,
+                    type: Math.random() > 0.6 ? 'pine' : 'oak',
+                    color: '#2d4a2d'
+                });
+            }
+
+            // Near trees - prominent roadside
+            nearTrees = [];
+            for (let i = 0; i < 8; i++) {
+                nearTrees.push({
+                    x: i * 290 - 100,
+                    y: height * 0.64,
+                    scale: 0.9 + Math.random() * 0.5,
+                    type: Math.random() > 0.5 ? 'pine' : 'oak',
+                    color: '#1e3a1e'
+                });
+            }
+
+            // Utility poles and signs
+            utilityPoles = [];
+            for (let i = 0; i < 6; i++) {
+                utilityPoles.push({
+                    x: i * 370 - 50,
+                    y: height * 0.63,
+                    height: 95 + Math.random() * 25,
+                    hasSign: Math.random() > 0.6
+                });
+            }
+
+            // Road markings (dashed center line)
+            roadMarkings = [];
+            for (let i = 0; i < 18; i++) {
+                roadMarkings.push({
+                    x: i * 125,
+                    y: height * 0.695,
+                    length: 48
+                });
+            }
+
+            // Grass patches on roadside
+            grassPatches = [];
+            for (let i = 0; i < 14; i++) {
+                grassPatches.push({
+                    x: i * 165 - 40,
+                    y: height * 0.71,
+                    width: 70 + Math.random() * 40,
+                    height: 18 + Math.random() * 12
+                });
+            }
+        }
+
+        function updateLayers(delta) {
+            const move = (speed) => speed * (delta / 16.67); // normalize to ~60fps
+
+            // Update all layers with parallax
+            distantMountains.forEach(m => {
+                m.x -= move(speeds.distantHills);
+                if (m.x < -m.width - 100) m.x += WORLD_WIDTH + 200;
+            });
+
+            midHills.forEach(h => {
+                h.x -= move(speeds.midHills);
+                if (h.x < -h.width - 80) h.x += WORLD_WIDTH + 160;
+            });
+
+            farTrees.forEach(t => {
+                t.x -= move(speeds.farTrees);
+                if (t.x < -180) t.x += WORLD_WIDTH + 120;
+            });
+
+            nearTrees.forEach(t => {
+                t.x -= move(speeds.nearTrees);
+                if (t.x < -220) t.x += WORLD_WIDTH + 150;
+            });
+
+            utilityPoles.forEach(p => {
+                p.x -= move(speeds.poles);
+                if (p.x < -80) p.x += WORLD_WIDTH + 100;
+            });
+
+            roadMarkings.forEach(m => {
+                m.x -= move(speeds.markings);
+                if (m.x < -m.length - 30) m.x += WORLD_WIDTH + 80;
+            });
+
+            grassPatches.forEach(g => {
+                g.x -= move(speeds.grass);
+                if (g.x < -g.width - 20) g.x += WORLD_WIDTH + 60;
+            });
+        }
+
+        function drawSky() {
+            // Gradient sunset sky
+            const skyGrad = ctx.createLinearGradient(0, 0, 0, height * 0.62);
+            skyGrad.addColorStop(0, '#0f1a2e');
+            skyGrad.addColorStop(0.25, '#2a3f6b');
+            skyGrad.addColorStop(0.45, '#5c3a6b');
+            skyGrad.addColorStop(0.68, '#c45a3a');
+            skyGrad.addColorStop(0.85, '#e87a3a');
+            skyGrad.addColorStop(1, '#f4a060');
+
+            ctx.fillStyle = skyGrad;
+            ctx.fillRect(0, 0, width, height * 0.62);
+
+            // Sun with glow
+            const sunX = width * 0.72;
+            const sunY = height * 0.31;
+            const sunR = 52;
+
+            // Outer glow
+            ctx.save();
+            const glowGrad = ctx.createRadialGradient(sunX, sunY, sunR * 0.3, sunX, sunY, sunR * 2.2);
+            glowGrad.addColorStop(0, 'rgba(255, 210, 120, 0.35)');
+            glowGrad.addColorStop(0.4, 'rgba(255, 160, 80, 0.18)');
+            glowGrad.addColorStop(1, 'rgba(255, 120, 50, 0)');
+            ctx.fillStyle = glowGrad;
+            ctx.beginPath();
+            ctx.arc(sunX, sunY, sunR * 2.2, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.restore();
+
+            // Sun core
+            ctx.fillStyle = '#ffe070';
+            ctx.beginPath();
+            ctx.arc(sunX, sunY, sunR, 0, Math.PI * 2);
+            ctx.fill();
+
+            // Sun highlight
+            ctx.fillStyle = 'rgba(255,255,255,0.6)';
+            ctx.beginPath();
+            ctx.arc(sunX - 12, sunY - 14, sunR * 0.35, 0, Math.PI * 2);
+            ctx.fill();
+        }
+
+        function drawDistantMountains() {
+            ctx.fillStyle = '#1a2a45';
+            ctx.strokeStyle = '#0f1a2e';
+            ctx.lineWidth = 1.5;
+
+            distantMountains.forEach(m => {
+                ctx.save();
+                ctx.translate(m.x, m.baseY);
+
+                // Mountain shape using bezier for natural look
+                ctx.beginPath();
+                ctx.moveTo(0, 0);
+                ctx.quadraticCurveTo(m.width * 0.25, -m.height * 0.7, m.width * 0.5, -m.height);
+                ctx.quadraticCurveTo(m.width * 0.75, -m.height * 0.55, m.width, 0);
+                ctx.lineTo(m.width, 80);
+                ctx.lineTo(0, 80);
+                ctx.closePath();
+
+                ctx.fillStyle = m.color;
+                ctx.fill();
+                ctx.stroke();
+
+                // Snow cap hint on taller ones
+                if (m.height > 160) {
+                    ctx.fillStyle = 'rgba(220, 230, 245, 0.35)';
+                    ctx.beginPath();
+                    ctx.moveTo(m.width * 0.38, -m.height * 0.75);
+                    ctx.quadraticCurveTo(m.width * 0.5, -m.height * 0.95, m.width * 0.62, -m.height * 0.72);
+                    ctx.lineTo(m.width * 0.5, -m.height * 0.6);
+                    ctx.closePath();
+                    ctx.fill();
+                }
+                ctx.restore();
+            });
+        }
+
+        function drawMidHills() {
+            ctx.fillStyle = '#2f3f2f';
+            midHills.forEach(h => {
+                ctx.save();
+                ctx.translate(h.x, h.baseY);
+
+                ctx.beginPath();
+                ctx.moveTo(0, 0);
+                ctx.quadraticCurveTo(h.width * 0.3, -h.height, h.width * 0.55, -h.height * 0.85);
+                ctx.quadraticCurveTo(h.width * 0.8, -h.height * 0.4, h.width, 0);
+                ctx.lineTo(h.width, 60);
+                ctx.lineTo(0, 60);
+                ctx.closePath();
+                ctx.fill();
+
+                // Gentle highlight
+                ctx.fillStyle = 'rgba(70, 85, 55, 0.3)';
+                ctx.beginPath();
+                ctx.ellipse(h.width * 0.4, -h.height * 0.35, h.width * 0.22, h.height * 0.18, 0, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.restore();
+            });
+        }
+
+        function drawTree(x, y, scale, type, color) {
+            ctx.save();
+            ctx.translate(x, y);
+
+            const trunkH = 38 * scale;
+            const trunkW = 9 * scale;
+
+            // Trunk
+            ctx.fillStyle = '#3a2a1a';
+            ctx.fillRect(-trunkW / 2, 0, trunkW, trunkH);
+
+            // Foliage
+            ctx.fillStyle = color;
+
+            if (type === 'pine') {
+                // Layered pine
+                for (let i = 0; i < 4; i++) {
+                    const ly = -trunkH * 0.3 - i * 18 * scale;
+                    const lw = (42 + i * 6) * scale;
+                    ctx.beginPath();
+                    ctx.moveTo(0, ly - 28 * scale);
+                    ctx.lineTo(-lw / 2, ly);
+                    ctx.lineTo(lw / 2, ly);
+                    ctx.closePath();
+                    ctx.fill();
+                }
+                // Top spike
+                ctx.beginPath();
+                ctx.moveTo(0, -trunkH * 0.35 - 32 * scale);
+                ctx.lineTo(-6 * scale, -trunkH * 0.35 - 8 * scale);
+                ctx.lineTo(6 * scale, -trunkH * 0.35 - 8 * scale);
+                ctx.closePath();
+                ctx.fill();
+            } else {
+                // Oak / rounded tree
+                ctx.beginPath();
+                ctx.ellipse(0, -trunkH * 0.45, 32 * scale, 28 * scale, 0, 0, Math.PI * 2);
+                ctx.fill();
+
+                ctx.beginPath();
+                ctx.ellipse(-14 * scale, -trunkH * 0.65, 22 * scale, 20 * scale, -0.4, 0, Math.PI * 2);
+                ctx.fill();
+
+                ctx.beginPath();
+                ctx.ellipse(16 * scale, -trunkH * 0.55, 19 * scale, 18 * scale, 0.3, 0, Math.PI * 2);
+                ctx.fill();
+
+                // Extra foliage clusters
+                ctx.beginPath();
+                ctx.ellipse(-8 * scale, -trunkH * 0.25, 16 * scale, 13 * scale, 0, 0, Math.PI * 2);
+                ctx.fill();
+            }
+
+            ctx.restore();
+        }
+
+        function drawFarTrees() {
+            farTrees.forEach(tree => {
+                drawTree(tree.x, tree.y, tree.scale, tree.type, '#2a4a2a');
+            });
+        }
+
+        function drawNearTrees() {
+            nearTrees.forEach(tree => {
+                drawTree(tree.x, tree.y, tree.scale, tree.type, tree.color);
+            });
+        }
+
+        function drawUtilityPoles() {
+            utilityPoles.forEach(pole => {
+                const px = pole.x;
+                const py = pole.y;
+                const ph = pole.height;
+
+                ctx.strokeStyle = '#2a2a2a';
+                ctx.lineWidth = 3.5;
+                ctx.lineCap = 'round';
+
+                // Main pole
+                ctx.beginPath();
+                ctx.moveTo(px, py);
+                ctx.lineTo(px, py - ph);
+                ctx.stroke();
+
+                // Cross arm
+                ctx.lineWidth = 2.5;
+                ctx.beginPath();
+                ctx.moveTo(px - 22, py - ph * 0.78);
+                ctx.lineTo(px + 22, py - ph * 0.78);
+                ctx.stroke();
+
+                // Wires (subtle)
+                ctx.strokeStyle = 'rgba(60,60,60,0.6)';
+                ctx.lineWidth = 1.2;
+                ctx.beginPath();
+                ctx.moveTo(px - 22, py - ph * 0.78);
+                ctx.lineTo(px - 120, py - ph * 0.78 - 4);
+                ctx.stroke();
+
+                ctx.beginPath();
+                ctx.moveTo(px + 22, py - ph * 0.78);
+                ctx.lineTo(px + 120, py - ph * 0.78 - 4);
+                ctx.stroke();
+
+                // Insulators
+                ctx.fillStyle = '#4a4a4a';
+                ctx.fillRect(px - 25, py - ph * 0.82, 6, 4);
+                ctx.fillRect(px + 19, py - ph * 0.82, 6, 4);
+
+                // Optional sign
+                if (pole.hasSign) {
+                    ctx.fillStyle = '#3a3a3a';
+                    ctx.fillRect(px - 14, py - ph * 0.92, 28, 18);
+                    ctx.strokeStyle = '#555';
+                    ctx.lineWidth = 1;
+                    ctx.strokeRect(px - 14, py - ph * 0.92, 28, 18);
+                }
+            });
+        }
+
+        function drawRoadAndGround() {
+            const roadTop = height * 0.64;
+            const roadBottom = height;
+
+            // Road surface
+            ctx.fillStyle = '#2a2a2f';
+            ctx.fillRect(0, roadTop, width, roadBottom - roadTop);
+
+            // Road shoulder / dirt edge
+            ctx.fillStyle = '#3a342a';
+            ctx.fillRect(0, roadTop - 4, width, 12);
+
+            // Subtle road texture / wear
+            ctx.fillStyle = 'rgba(0,0,0,0.25)';
+            for (let i = 0; i < 5; i++) {
+                const rx = (i * 380 + (time * 0.08) % 380) % width;
+                ctx.fillRect(rx, roadTop + 18, 180, 3);
+            }
+        }
+
+        function drawRoadMarkings() {
+            ctx.strokeStyle = '#e8e8e8';
+            ctx.lineWidth = 3.5;
+            ctx.lineCap = 'butt';
+
+            const y = height * 0.695;
+
+            roadMarkings.forEach(mark => {
+                ctx.beginPath();
+                ctx.moveTo(mark.x, y);
+                ctx.lineTo(mark.x + mark.length, y);
+                ctx.stroke();
+            });
+
+            // Edge lines (subtle)
+            ctx.strokeStyle = 'rgba(180,180,180,0.5)';
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            ctx.moveTo(0, height * 0.66);
+            ctx.lineTo(width, height * 0.66);
+            ctx.stroke();
+
+            ctx.beginPath();
+            ctx.moveTo(0, height * 0.73);
+            ctx.lineTo(width, height * 0.73);
+            ctx.stroke();
+        }
+
+        function drawGrass() {
+            ctx.fillStyle = '#2a3a22';
+            grassPatches.forEach(g => {
+                ctx.fillRect(g.x, g.y, g.width, g.height);
+
+                // Blade details
+                ctx.fillStyle = '#1f2f1a';
+                for (let b = 0; b < 5; b++) {
+                    const bx = g.x + (b * 13) % g.width;
+                    ctx.fillRect(bx, g.y + 2, 3, g.height - 4);
+                }
+                ctx.fillStyle = '#2a3a22';
+            });
+        }
+
+        function drawCar() {
+            ctx.save();
+
+            // Subtle suspension bob and road feel
+            suspension = Math.sin(time * 0.045) * 1.8 + Math.sin(time * 0.11) * 0.6;
+            const bobY = carY + suspension;
+
+            ctx.translate(CAR_X, bobY);
+
+            // Car shadow on road
+            ctx.fillStyle = 'rgba(0,0,0,0.35)';
+            ctx.beginPath();
+            ctx.ellipse(78, 52, 92, 11, 0, 0, Math.PI * 2);
+            ctx.fill();
+
+            // === CAR BODY ===
+            // Main body (lower)
+            ctx.fillStyle = '#9c2b1f';
+            ctx.fillRect(8, 18, 168, 38);
+
+            // Upper body / cabin
+            ctx.fillStyle = '#b33a2a';
+            ctx.fillRect(42, 2, 108, 20);
+
+            // Roof curve
+            ctx.fillStyle = '#9c2b1f';
+            ctx.beginPath();
+            ctx.moveTo(42, 2);
+            ctx.quadraticCurveTo(95, -12, 150, 2);
+            ctx.lineTo(150, 18);
+            ctx.lineTo(42, 18);
+            ctx.closePath();
+            ctx.fill();
+
+            // Body highlight
+            ctx.fillStyle = 'rgba(255,255,255,0.12)';
+            ctx.fillRect(12, 20, 160, 8);
+
+            // === WINDOWS ===
+            ctx.fillStyle = '#1a3a5a';
+            ctx.fillRect(48, 5, 42, 14);   // front window
+            ctx.fillRect(98, 5, 46, 14);   // rear window
+
+            // Window reflections
+            ctx.fillStyle = 'rgba(200,220,255,0.25)';
+            ctx.fillRect(50, 6, 18, 5);
+            ctx.fillRect(100, 6, 20, 5);
+
+            // Chrome trim
+            ctx.strokeStyle = '#d0d0d0';
+            ctx.lineWidth = 1.5;
+            ctx.strokeRect(42, 2, 108, 18);
+
+            // Door line
+            ctx.strokeStyle = '#6a1f17';
+            ctx.lineWidth = 1.2;
+            ctx.beginPath();
+            ctx.moveTo(95, 18);
+            ctx.lineTo(95, 54);
+            ctx.stroke();
+
+            // === WHEELS ===
+            const wheelY = 56;
+            const wheelR = 19;
+
+            function drawWheel(wx, wy) {
+                ctx.save();
+                ctx.translate(wx, wy);
+
+                // Tire
+                ctx.fillStyle = '#111';
+                ctx.beginPath();
+                ctx.arc(0, 0, wheelR, 0, Math.PI * 2);
+                ctx.fill();
+
+                // Tire rim highlight
+                ctx.strokeStyle = '#333';
+                ctx.lineWidth = 3;
+                ctx.beginPath();
+                ctx.arc(0, 0, wheelR - 2, 0, Math.PI * 2);
+                ctx.stroke();
+
+                // Rim
+                ctx.fillStyle = '#444';
+                ctx.beginPath();
+                ctx.arc(0, 0, wheelR * 0.62, 0, Math.PI * 2);
+                ctx.fill();
+
+                // Spokes / hub
+                ctx.strokeStyle = '#222';
+                ctx.lineWidth = 2.5;
+                ctx.save();
+                ctx.rotate(wheelAngle);
+                for (let s = 0; s < 5; s++) {
+                    ctx.rotate(Math.PI * 2 / 5);
+                    ctx.beginPath();
+                    ctx.moveTo(0, 0);
+                    ctx.lineTo(0, -wheelR * 0.55);
+                    ctx.stroke();
+                }
+                ctx.restore();
+
+                // Hub cap
+                ctx.fillStyle = '#c8c8c8';
+                ctx.beginPath();
+                ctx.arc(0, 0, wheelR * 0.28, 0, Math.PI * 2);
+                ctx.fill();
+
+                // Motion blur hint on tire edge
+                ctx.strokeStyle = 'rgba(255,255,255,0.08)';
+                ctx.lineWidth = 1.5;
+                ctx.beginPath();
+                ctx.arc(0, 0, wheelR - 0.5, wheelAngle, wheelAngle + 1.8);
+                ctx.stroke();
+
+                ctx.restore();
+            }
+
+            // Front wheel (right side of car)
+            drawWheel(152, wheelY);
+            // Rear wheel
+            drawWheel(38, wheelY);
+
+            // === DETAILS ===
+            // Headlight
+            ctx.fillStyle = '#ffe070';
+            ctx.fillRect(172, 28, 12, 10);
+            ctx.fillStyle = 'rgba(255,240,160,0.6)';
+            ctx.fillRect(174, 29, 8, 8);
+
+            // Taillight
+            ctx.fillStyle = '#c81010';
+            ctx.fillRect(3, 30, 8, 7);
+
+            // Side mirror
+            ctx.fillStyle = '#2a2a2a';
+            ctx.fillRect(38, 12, 7, 6);
+
+            // Exhaust
+            ctx.fillStyle = '#1a1a1a';
+            ctx.fillRect(-6, 48, 9, 5);
+
+            ctx.restore();
+        }
+
+        function drawAtmosphere() {
+            // Subtle vignette for cinematic feel
+            const grad = ctx.createRadialGradient(
+                width * 0.5, height * 0.55, Math.min(width, height) * 0.35,
+                width * 0.5, height * 0.55, Math.max(width, height) * 0.75
+            );
+            grad.addColorStop(0, 'rgba(0,0,0,0)');
+            grad.addColorStop(1, 'rgba(0,0,0,0.45)');
+            ctx.fillStyle = grad;
+            ctx.fillRect(0, 0, width, height);
+
+            // Light haze near horizon
+            ctx.fillStyle = 'rgba(255, 180, 100, 0.06)';
+            ctx.fillRect(0, height * 0.48, width, height * 0.18);
+        }
+
+        function draw() {
+            ctx.clearRect(0, 0, width, height);
+
+            // Background layers (back to front)
+            drawSky();
+            drawDistantMountains();
+            drawMidHills();
+            drawFarTrees();
+
+            // Road area
+            drawRoadAndGround();
+            drawGrass();
+            drawRoadMarkings();
+
+            // Midground elements
+            drawUtilityPoles();
+            drawNearTrees();
+
+            // The car (foreground subject)
+            drawCar();
+
+            // Atmospheric overlay
+            drawAtmosphere();
+
+            // Update wheel rotation based on implied speed
+            wheelAngle += 0.18;
+            if (wheelAngle > Math.PI * 2) wheelAngle -= Math.PI * 2;
+        }
+
+        function animate(currentTime = performance.now()) {
+            const delta = currentTime - lastTime;
+            lastTime = currentTime;
+            time += delta * 0.06; // slow time for organic feel
+
+            // Update all moving elements
+            updateLayers(delta);
+
+            // Gentle car body motion (suspension + road feel)
+            carBob = Math.sin(time * 0.04) * 0.9 + Math.sin(time * 0.09) * 0.4;
+
+            // Render everything
+            draw();
+
+            requestAnimationFrame(animate);
+        }
+
+        function start() {
+            resizeCanvas();
+            initLayers();
+
+            // Seed initial positions so it starts moving immediately
+            const initialOffset = 120;
+            distantMountains.forEach((m, i) => m.x -= initialOffset * 0.3 + i * 12);
+            midHills.forEach((h, i) => h.x -= initialOffset * 0.9 + i * 8);
+            farTrees.forEach((t, i) => t.x -= initialOffset * 1.6 + i * 15);
+            nearTrees.forEach((t, i) => t.x -= initialOffset * 2.8 + i * 20);
+            utilityPoles.forEach((p, i) => p.x -= initialOffset * 4.2 + i * 25);
+            roadMarkings.forEach((m, i) => m.x -= initialOffset * 5.5 + i * 18);
+            grassPatches.forEach((g, i) => g.x -= initialOffset * 3.3 + i * 10);
+
+            // Kick off animation
+            requestAnimationFrame(animate);
+
+            // Handle resize
+            window.addEventListener('resize', () => {
+                resizeCanvas();
+            });
+        }
+
+        // Boot
+        start();
+    </script>
+</body>
+</html>
