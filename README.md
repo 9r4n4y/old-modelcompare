@@ -7,3 +7,6 @@ A static gallery comparing single-file HTML canvas animations produced from the 
 - Setup: same prompt, one isolated run per model, highest available thinking/effort settings.
 
 Open `index.html` to view the gallery.
+
+live https://aidengeungeun.github.io/oco-canvas-car-scene-compare/index.html
+
